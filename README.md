@@ -58,6 +58,8 @@ Wildfires across the world—from the California Sierra Nevada and the Mediterra
 | **Contract Address** | `0x07e754c6E2F89f422F4AF81Ff2e42028A9fC913d` |
 | **Transaction Hash** | `0x74457b0730e66f95e6663751ac0addbbaf4e69011af698734504610772b843aa` |
 | **Receipt Status** | `5` (ACCEPTED / FINALIZED) |
+| **Live Web3 dApp** | [https://frontend-three-drab-v46xpao16q.vercel.app](https://frontend-three-drab-v46xpao16q.vercel.app) |
+| **GitHub Repository** | [https://github.com/tuannguyen1995/AgentWildFire](https://github.com/tuannguyen1995/AgentWildFire) |
 | **GenLayer Studio View** | [View on GenLayer Studio](https://studio.genlayer.com/contracts/0x07e754c6E2F89f422F4AF81Ff2e42028A9fC913d) |
 
 ---
