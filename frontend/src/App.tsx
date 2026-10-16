@@ -2,26 +2,29 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   Flame, 
   Satellite, 
-  ShieldCheck, 
   Plus, 
   Search, 
-  Filter, 
+  Radio, 
+  ShieldCheck, 
+  Activity, 
+  Clock, 
+  Globe, 
+  Coins, 
   AlertCircle, 
   CheckCircle2, 
+  Terminal,
   ExternalLink,
-  Info,
-  Radio,
-  Sparkles,
-  Zap
+  Zap,
+  ArrowRight
 } from 'lucide-react';
 import { Navbar } from './components/Navbar';
-import { StatsOverview } from './components/StatsOverview';
-import { PolicyCard } from './components/PolicyCard';
+import { TacticalRadarViewport } from './components/TacticalRadarViewport';
+import { MissionCockpit } from './components/MissionCockpit';
+import { FleetDock } from './components/FleetDock';
 import { CreatePolicyModal } from './components/CreatePolicyModal';
 import { TriggerAlertModal } from './components/TriggerAlertModal';
 import { ThermalInspectorModal } from './components/ThermalInspectorModal';
 import { AppealModal } from './components/AppealModal';
-import { PullPayoutButton } from './components/PullPayoutButton';
 import { 
   STUDIONET_CHAIN_ID_HEX,
   STUDIO_URL,
@@ -42,15 +45,16 @@ import {
   WildfirePolicyData,
   ProtocolStats
 } from './config/genlayer';
+import { formatGen } from './utils/formatters';
 
 export const App: React.FC = () => {
-  // Wallet & Connection state
+  // Wallet & network state
   const [account, setAccount] = useState<string>('');
   const [balance, setBalance] = useState<string>('0.000');
   const [claimableBalance, setClaimableBalance] = useState<string>('0');
   const [contractAddress, setContractAddress] = useState<string>(getSavedContractAddress());
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   // Contract data state
   const [stats, setStats] = useState<ProtocolStats>({
@@ -59,20 +63,19 @@ export const App: React.FC = () => {
     total_disasters_settled: 0,
   });
   const [policies, setPolicies] = useState<WildfirePolicyData[]>([]);
-  const [selectedFilter, setSelectedFilter] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [selectedPolicy, setSelectedPolicy] = useState<WildfirePolicyData | null>(null);
 
-  // Modals state
+  // Modal triggers
   const [isCreateOpen, setIsCreateOpen] = useState<boolean>(false);
   const [isTriggerOpen, setIsTriggerOpen] = useState<boolean>(false);
   const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(false);
   const [isAppealOpen, setIsAppealOpen] = useState<boolean>(false);
-  const [activePolicy, setActivePolicy] = useState<WildfirePolicyData | null>(null);
+  const [modalTargetPolicy, setModalTargetPolicy] = useState<WildfirePolicyData | null>(null);
 
   const showToast = (type: 'success' | 'error' | 'info', message: string) => {
-    setNotification({ type, message });
+    setToast({ type, message });
     setTimeout(() => {
-      setNotification((prev) => (prev?.message === message ? null : prev));
+      setToast((prev) => (prev?.message === message ? null : prev));
     }, 6000);
   };
 
@@ -88,7 +91,7 @@ export const App: React.FC = () => {
       const accounts = await (window as any).ethereum.request({ method: 'eth_requestAccounts' });
       if (accounts && accounts.length > 0) {
         setAccount(accounts[0]);
-        showToast('success', `Connected: ${accounts[0].slice(0, 6)}...${accounts[0].slice(-4)}`);
+        showToast('success', `Mission Control Connected: ${accounts[0].slice(0, 6)}...${accounts[0].slice(-4)}`);
         refreshBalances(accounts[0]);
       }
     } catch (err: any) {
@@ -98,7 +101,6 @@ export const App: React.FC = () => {
     }
   };
 
-  // Fetch balances
   const refreshBalances = async (userAddr: string) => {
     if (!userAddr) return;
     try {
@@ -111,7 +113,7 @@ export const App: React.FC = () => {
     }
   };
 
-  // Load on-chain data
+  // Load live data from Studionet
   const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -122,11 +124,20 @@ export const App: React.FC = () => {
       setStats(statsData);
       setPolicies(policiesData);
 
+      // Maintain or set default selected policy
+      setSelectedPolicy((prev) => {
+        if (prev) {
+          const updated = policiesData.find((p) => p.policy_id === prev.policy_id);
+          return updated || policiesData[0] || null;
+        }
+        return policiesData[0] || null;
+      });
+
       if (account) {
         await refreshBalances(account);
       }
     } catch (err) {
-      console.warn('Data load error:', err);
+      console.warn('Load data error:', err);
     } finally {
       setIsLoading(false);
     }
@@ -134,7 +145,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 10000);
+    const interval = setInterval(loadData, 9000);
     return () => clearInterval(interval);
   }, [loadData]);
 
@@ -170,7 +181,7 @@ export const App: React.FC = () => {
     if (!account) throw new Error('Please connect wallet');
     setIsLoading(true);
     try {
-      const tx = await createReliefPolicy(
+      await createReliefPolicy(
         contractAddress,
         account,
         data.beneficiary,
@@ -179,7 +190,7 @@ export const App: React.FC = () => {
         data.durationBlocks,
         data.escrowGen
       );
-      showToast('success', 'Relief Escrow successfully locked on Studionet!');
+      showToast('success', 'Parametric Relief Policy successfully locked on Studionet!');
       await loadData();
     } catch (err: any) {
       showToast('error', err?.message || 'Policy creation failed');
@@ -194,7 +205,7 @@ export const App: React.FC = () => {
     setIsLoading(true);
     try {
       await triggerWildfireAlert(contractAddress, account, policyId, satelliteUrl);
-      showToast('success', `Wildfire alert filed for Policy #${policyId}. Ready for AI Satellite Jury!`);
+      showToast('success', `Satellite wildfire alert filed for Zone #${policyId}. Ready for AI Remote Sensing Jury!`);
       await loadData();
     } catch (err: any) {
       showToast('error', err?.message || 'Failed to submit satellite alert');
@@ -207,10 +218,10 @@ export const App: React.FC = () => {
   const handleAdjudicate = async (policyId: string) => {
     if (!account) return showToast('info', 'Please connect wallet');
     setIsLoading(true);
-    showToast('info', 'AI Satellite Jury cross-examining thermal telemetry...');
+    showToast('info', 'AI Remote Sensing Jury analyzing NASA/Copernicus infrared radiance...');
     try {
       await adjudicateWildfireSeverity(contractAddress, account, policyId);
-      showToast('success', `AI Adjudication completed for Policy #${policyId}!`);
+      showToast('success', `AI Adjudication completed for Zone #${policyId}!`);
       await loadData();
     } catch (err: any) {
       showToast('error', err?.message || 'Adjudication failed');
@@ -224,7 +235,7 @@ export const App: React.FC = () => {
     setIsLoading(true);
     try {
       await appealVerdict(contractAddress, account, policyId, reason, supplementalUrl, bondWei);
-      showToast('success', `Appeal filed for Policy #${policyId} with 10% staked dispute bond.`);
+      showToast('success', `Appeal filed for Zone #${policyId} with 10% staked dispute bond.`);
       await loadData();
     } catch (err: any) {
       showToast('error', err?.message || 'Appeal filing failed');
@@ -240,7 +251,7 @@ export const App: React.FC = () => {
     showToast('info', 'Supreme Satellite Appellate Tribunal reviewing supplemental logs...');
     try {
       await adjudicateAppeal(contractAddress, account, policyId);
-      showToast('success', `Appellate Tribunal decision recorded for Policy #${policyId}!`);
+      showToast('success', `Appellate Tribunal decision recorded for Zone #${policyId}!`);
       await loadData();
     } catch (err: any) {
       showToast('error', err?.message || 'Appellate adjudication failed');
@@ -254,7 +265,7 @@ export const App: React.FC = () => {
     setIsLoading(true);
     try {
       await finalizeSettlement(contractAddress, account, policyId);
-      showToast('success', `Settlement finalized for Policy #${policyId}. Funds disbursed!`);
+      showToast('success', `Settlement finalized for Zone #${policyId}. Funds dispatched!`);
       await loadData();
     } catch (err: any) {
       showToast('error', err?.message || 'Finalization failed');
@@ -268,7 +279,7 @@ export const App: React.FC = () => {
     setIsLoading(true);
     try {
       await cancelOrReclaim(contractAddress, account, policyId);
-      showToast('success', `Expired escrow reclaimed for Policy #${policyId}!`);
+      showToast('success', `Expired escrow reclaimed for Zone #${policyId}!`);
       await loadData();
     } catch (err: any) {
       showToast('error', err?.message || 'Reclaim failed');
@@ -282,7 +293,7 @@ export const App: React.FC = () => {
     setIsLoading(true);
     try {
       await claimPayout(contractAddress, account);
-      showToast('success', 'Relief funds claimed successfully to your wallet!');
+      showToast('success', 'Relief escrow safely withdrawn to your wallet!');
       await loadData();
     } catch (err: any) {
       showToast('error', err?.message || 'Claim failed');
@@ -291,56 +302,26 @@ export const App: React.FC = () => {
     }
   };
 
-  // Filtered & Searched Policies
-  const filteredPolicies = useMemo(() => {
-    return policies.filter((p) => {
-      // Filter tab
-      if (selectedFilter === 'active' && p.status !== 0) return false;
-      if (selectedFilter === 'alert' && p.status !== 1) return false;
-      if (selectedFilter === 'awaiting' && p.status !== 2) return false;
-      if (selectedFilter === 'disputed' && p.status !== 6) return false;
-      if (selectedFilter === 'settled' && p.status !== 3 && p.status !== 4) return false;
-      if (selectedFilter === 'refunded' && p.status !== 5 && p.status !== 7) return false;
-      if (selectedFilter === 'unresolved' && p.status !== 8) return false;
-
-      // Search query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const matchesId = p.policy_id.includes(q);
-        const matchesSponsor = p.sponsor.toLowerCase().includes(q);
-        const matchesBen = p.beneficiary.toLowerCase().includes(q);
-        const matchesPoly = p.forest_zone_polygon.toLowerCase().includes(q);
-        const matchesVerdict = p.verdict.toLowerCase().includes(q);
-        return matchesId || matchesSponsor || matchesBen || matchesPoly || matchesVerdict;
-      }
-
-      return true;
-    });
-  }, [policies, selectedFilter, searchQuery]);
-
-  const activeCount = useMemo(() => policies.filter((p) => p.status === 0).length, [policies]);
-  const disputedCount = useMemo(() => policies.filter((p) => p.status === 6).length, [policies]);
-
   return (
-    <div className="min-h-screen bg-warroom-900 text-slate-100 flex flex-col grid-radar">
+    <div className="min-h-screen bg-warroom-900 text-slate-100 flex flex-col grid-tactical selection:bg-plasma-orange selection:text-white">
       
       {/* Toast Notification */}
-      {notification && (
-        <div className={`fixed top-4 right-4 z-50 max-w-md p-4 rounded-xl shadow-2xl border flex items-center space-x-3 animate-in slide-in-from-top-4 duration-200 ${
-          notification.type === 'success'
-            ? 'bg-telemetry-emerald/20 border-telemetry-emerald/50 text-emerald-200'
-            : notification.type === 'error'
-            ? 'bg-rose-950/90 border-rose-600 text-rose-200'
-            : 'bg-warroom-800 border-plasma-orange text-orange-200'
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 max-w-md p-4 rounded-2xl shadow-2xl border flex items-center space-x-3 animate-in slide-in-from-top-4 duration-200 ${
+          toast.type === 'success'
+            ? 'bg-telemetry-emerald/20 border-telemetry-emerald/60 text-emerald-200 shadow-cyber'
+            : toast.type === 'error'
+            ? 'bg-rose-950/90 border-rose-600 text-rose-200 shadow-fire'
+            : 'bg-warroom-950 border-plasma-orange text-orange-200 shadow-ember'
         }`}>
-          {notification.type === 'success' && <CheckCircle2 className="w-5 h-5 flex-shrink-0 text-telemetry-emerald" />}
-          {notification.type === 'error' && <AlertCircle className="w-5 h-5 flex-shrink-0 text-rose-400" />}
-          {notification.type === 'info' && <Radio className="w-5 h-5 flex-shrink-0 text-plasma-orange animate-pulse" />}
-          <span className="text-xs font-medium">{notification.message}</span>
+          {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 flex-shrink-0 text-telemetry-emerald" />}
+          {toast.type === 'error' && <AlertCircle className="w-5 h-5 flex-shrink-0 text-rose-400" />}
+          {toast.type === 'info' && <Radio className="w-5 h-5 flex-shrink-0 text-plasma-orange animate-pulse" />}
+          <span className="text-xs font-mono font-medium">{toast.message}</span>
         </div>
       )}
 
-      {/* Navigation Bar */}
+      {/* Top Aerospace Navbar */}
       <Navbar
         account={account}
         onConnect={connectWallet}
@@ -351,206 +332,175 @@ export const App: React.FC = () => {
         isLoading={isLoading}
       />
 
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full space-y-6">
         
-        {/* Pull Payment Action Banner (if funds buffered) */}
-        <PullPayoutButton
-          claimableBalance={claimableBalance}
-          onClaim={handleClaimPayout}
-          isLoading={isLoading}
-        />
-
-        {/* Hero Section */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-warroom-800 via-warroom-850 to-warroom-900 border border-warroom-700/80 p-8 md:p-10 mb-8 shadow-2xl">
-          <div className="relative z-10 max-w-3xl">
-            <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-plasma-orange/15 border border-plasma-orange/30 text-plasma-orange text-xs font-medium mb-4">
-              <Satellite className="w-3.5 h-3.5" />
-              <span>Earth Observation Oracles &bull; GenLayer Studionet</span>
-            </div>
-            
-            <h1 className="text-3xl md:text-5xl font-heading font-extrabold tracking-tight text-white mb-4 leading-tight">
-              Autonomous Satellite Wildfire Detection & <span className="text-transparent bg-clip-text bg-gradient-to-r from-plasma-orange via-plasma-flame to-rose-400">Parametric Relief Escrow</span>
-            </h1>
-
-            <p className="text-sm md:text-base text-slate-300 leading-relaxed mb-6 font-sans">
-              Traditional disaster relief is delayed by bureaucratic paperwork while communities burn. <strong className="text-white">AgentWildFire</strong> replaces paperwork with <strong className="text-plasma-orange">GenLayer Intelligent Contracts</strong>: locks parametric escrow, renders live NASA FIRMS / Copernicus infrared radiance telemetry on-chain via <code className="text-telemetry-cyan font-mono text-xs">gl.nondet.web.render</code>, and releases 100% relief funds in minutes.
-            </p>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                onClick={() => setIsCreateOpen(true)}
-                className="flex items-center space-x-2 px-6 py-3 rounded-xl bg-gradient-to-r from-plasma-orange to-plasma-flame hover:from-orange-500 hover:to-red-500 text-white font-semibold text-sm shadow-ember transition-all active:scale-95"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Initialize Parametric Relief Policy</span>
-              </button>
-
-              <a
-                href={`${STUDIO_URL}/contracts/${contractAddress}`}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center space-x-2 px-5 py-3 rounded-xl bg-warroom-800 border border-warroom-700 hover:border-slate-500 text-slate-200 text-sm font-medium transition-all"
-              >
-                <span>View Intelligent Contract</span>
-                <ExternalLink className="w-4 h-4 text-slate-400" />
-              </a>
-            </div>
-          </div>
-
-          {/* Decorative radar background */}
-          <div className="absolute right-0 top-0 bottom-0 w-1/3 opacity-15 pointer-events-none hidden lg:flex items-center justify-center">
-            <Flame className="w-96 h-96 text-plasma-orange" />
-          </div>
-        </div>
-
-        {/* High-Level Protocol Statistics */}
-        <StatsOverview
-          stats={stats}
-          totalPoliciesCount={policies.length}
-          activeCount={activeCount}
-          disputedCount={disputedCount}
-        />
-
-        {/* Policy Explorer & War Room Controls */}
-        <div className="space-y-6">
+        {/* VIP Mission Control HUD Bar */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
           
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-2 border-b border-warroom-700/60">
+          <div className="bg-warroom-900/90 border border-warroom-700/80 rounded-2xl p-4 flex items-center justify-between hud-bracket shadow-lg">
             <div>
-              <h2 className="text-xl font-heading font-bold text-white flex items-center gap-2">
-                <Satellite className="w-5 h-5 text-plasma-orange" />
-                <span>Wildfire Thermal War Room & Surveillance Grid</span>
-              </h2>
-              <p className="text-xs text-slate-400">
-                Live geofenced forest polygons monitored via NASA FIRMS & Sentinel satellites
-              </p>
-            </div>
-
-            {/* Search Input */}
-            <div className="relative w-full md:w-72">
-              <Search className="w-4 h-4 absolute left-3 top-3 text-slate-500" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search ID, polygon, address..."
-                className="w-full pl-9 pr-4 py-2 rounded-xl bg-warroom-800 border border-warroom-700 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-plasma-orange"
-              />
-            </div>
-          </div>
-
-          {/* Filter Pills */}
-          <div className="flex flex-wrap items-center gap-2">
-            {[
-              { id: 'all', label: 'All Policies', count: policies.length },
-              { id: 'active', label: 'Surveillance Active', count: policies.filter(p => p.status === 0).length },
-              { id: 'alert', label: 'Alert Triggered', count: policies.filter(p => p.status === 1).length },
-              { id: 'awaiting', label: 'Awaiting Settlement', count: policies.filter(p => p.status === 2).length },
-              { id: 'disputed', label: 'Under Dispute', count: policies.filter(p => p.status === 6).length },
-              { id: 'settled', label: 'Disaster Paid', count: policies.filter(p => p.status === 3 || p.status === 4).length },
-              { id: 'refunded', label: 'False Alarm / Reclaimed', count: policies.filter(p => p.status === 5 || p.status === 7).length },
-              { id: 'unresolved', label: 'Protected Unresolved', count: policies.filter(p => p.status === 8).length },
-            ].map((f) => (
-              <button
-                key={f.id}
-                onClick={() => setSelectedFilter(f.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center space-x-1.5 ${
-                  selectedFilter === f.id
-                    ? 'bg-plasma-orange text-white shadow-ember font-semibold'
-                    : 'bg-warroom-800 text-slate-300 hover:bg-warroom-700 border border-warroom-700/80'
-                }`}
-              >
-                <span>{f.label}</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                  selectedFilter === f.id ? 'bg-white/20 text-white' : 'bg-warroom-900 text-slate-400'
-                }`}>
-                  {f.count}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {/* Policies Grid */}
-          {filteredPolicies.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredPolicies.map((policy) => (
-                <PolicyCard
-                  key={policy.policy_id}
-                  policy={policy}
-                  userAddress={account}
-                  onOpenTriggerAlert={(p) => {
-                    setActivePolicy(p);
-                    setIsTriggerOpen(true);
-                  }}
-                  onOpenInspector={(p) => {
-                    setActivePolicy(p);
-                    setIsInspectorOpen(true);
-                  }}
-                  onOpenAppeal={(p) => {
-                    setActivePolicy(p);
-                    setIsAppealOpen(true);
-                  }}
-                  onAdjudicate={handleAdjudicate}
-                  onAdjudicateAppeal={handleAdjudicateAppeal}
-                  onFinalize={handleFinalize}
-                  onReclaim={handleReclaim}
-                  isLoading={isLoading}
-                />
-              ))}
-            </div>
-          ) : (
-            /* Empty State */
-            <div className="text-center py-16 px-4 bg-warroom-800/40 border border-warroom-700/60 rounded-3xl">
-              <div className="w-16 h-16 rounded-2xl bg-plasma-orange/15 border border-plasma-orange/30 flex items-center justify-center text-plasma-orange mx-auto mb-4">
-                <Flame className="w-8 h-8" />
+              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                Total Relief Escrow
               </div>
-              <h3 className="text-lg font-heading font-bold text-white mb-2">
-                No Parametric Relief Policies Found
-              </h3>
-              <p className="text-xs text-slate-400 max-w-md mx-auto mb-6">
-                {searchQuery || selectedFilter !== 'all'
-                  ? 'No policies match your search query or selected filter criteria.'
-                  : 'No forest canopy relief escrow pools have been initialized on Studionet yet. Create the first policy to begin autonomous satellite surveillance.'}
-              </p>
-              <button
-                onClick={() => setIsCreateOpen(true)}
-                className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-plasma-orange to-plasma-flame hover:from-orange-500 hover:to-red-500 text-white font-semibold text-xs shadow-ember transition-all"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Initialize First Relief Policy</span>
-              </button>
+              <div className="flex items-baseline space-x-1.5 mt-0.5">
+                <span className="text-2xl font-heading font-extrabold text-white">
+                  {formatGen(stats.total_relief_locked || '0')}
+                </span>
+                <span className="font-mono text-xs text-plasma-orange font-bold">GEN</span>
+              </div>
             </div>
-          )}
+            <div className="w-10 h-10 rounded-xl bg-plasma-orange/15 border border-plasma-orange/30 flex items-center justify-center text-plasma-orange">
+              <Flame className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div className="bg-warroom-900/90 border border-warroom-700/80 rounded-2xl p-4 flex items-center justify-between hud-bracket shadow-lg">
+            <div>
+              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                Disasters Settled
+              </div>
+              <div className="flex items-baseline space-x-1.5 mt-0.5">
+                <span className="text-2xl font-heading font-extrabold text-white">
+                  {stats.total_disasters_settled}
+                </span>
+                <span className="text-xs text-slate-400 font-mono">Dispatches</span>
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-plasma-flame/15 border border-plasma-flame/30 flex items-center justify-center text-plasma-flame">
+              <Activity className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div className="bg-warroom-900/90 border border-warroom-700/80 rounded-2xl p-4 flex items-center justify-between hud-bracket shadow-lg">
+            <div>
+              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                Monitored Canopies
+              </div>
+              <div className="flex items-baseline space-x-1.5 mt-0.5">
+                <span className="text-2xl font-heading font-extrabold text-white">
+                  {policies.length}
+                </span>
+                <span className="text-xs text-telemetry-cyan font-mono">Zones Active</span>
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-telemetry-cyan/15 border border-telemetry-cyan/30 flex items-center justify-center text-telemetry-cyan">
+              <Globe className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div className="bg-warroom-900/90 border border-warroom-700/80 rounded-2xl p-4 flex items-center justify-between hud-bracket shadow-lg">
+            <div>
+              <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                Cooling Challenge
+              </div>
+              <div className="flex items-baseline space-x-1.5 mt-0.5">
+                <span className="text-2xl font-heading font-extrabold text-purple-300">
+                  24
+                </span>
+                <span className="text-xs text-purple-400 font-mono">Blocks (~72s)</span>
+              </div>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400">
+              <Clock className="w-5 h-5" />
+            </div>
+          </div>
 
         </div>
+
+        {/* Central Tactical Split Screen */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+          
+          {/* Left Wing (7 Cols): Tactical Earth Observation Radar Viewport */}
+          <div className="lg:col-span-7 flex flex-col">
+            <TacticalRadarViewport
+              policies={policies}
+              selectedPolicy={selectedPolicy}
+              onSelectPolicy={(p) => setSelectedPolicy(p)}
+              onOpenTriggerAlert={(p) => {
+                setModalTargetPolicy(p);
+                setIsTriggerOpen(true);
+              }}
+              onOpenInspector={(p) => {
+                setModalTargetPolicy(p);
+                setIsInspectorOpen(true);
+              }}
+            />
+          </div>
+
+          {/* Right Wing (5 Cols): Parametric Operations Cockpit */}
+          <div className="lg:col-span-5 flex flex-col">
+            <MissionCockpit
+              policy={selectedPolicy}
+              userAddress={account}
+              onOpenTriggerAlert={(p) => {
+                setModalTargetPolicy(p);
+                setIsTriggerOpen(true);
+              }}
+              onOpenInspector={(p) => {
+                setModalTargetPolicy(p);
+                setIsInspectorOpen(true);
+              }}
+              onOpenAppeal={(p) => {
+                setModalTargetPolicy(p);
+                setIsAppealOpen(true);
+              }}
+              onAdjudicate={handleAdjudicate}
+              onAdjudicateAppeal={handleAdjudicateAppeal}
+              onFinalize={handleFinalize}
+              onReclaim={handleReclaim}
+              isLoading={isLoading}
+            />
+          </div>
+
+        </div>
+
+        {/* Bottom Fleet Matrix Dock */}
+        <FleetDock
+          policies={policies}
+          selectedPolicy={selectedPolicy}
+          onSelectPolicy={(p) => setSelectedPolicy(p)}
+          onOpenCreate={() => setIsCreateOpen(true)}
+        />
 
       </main>
 
       {/* Footer */}
-      <footer className="mt-auto border-t border-warroom-700/60 bg-warroom-850/60 py-6 text-xs text-slate-400">
+      <footer className="mt-auto border-t border-warroom-700/80 bg-warroom-950 py-5 text-xs text-slate-400 font-mono">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2.5">
             <Flame className="w-4 h-4 text-plasma-orange" />
             <span className="font-heading font-bold text-slate-200">AgentWildFire Protocol</span>
-            <span>&bull;</span>
-            <span>GenLayer StudioNet (Chain ID: 61999)</span>
+            <span className="text-slate-600">|</span>
+            <span>GenLayer StudioNet (Chain ID: 61999 / 0xF22F)</span>
           </div>
 
-          <div className="flex items-center space-x-4 font-mono text-[11px]">
+          <div className="flex items-center space-x-4 text-[11px]">
             <a
               href={`${STUDIO_URL}/contracts/${contractAddress}`}
               target="_blank"
               rel="noreferrer"
-              className="text-slate-400 hover:text-plasma-orange transition-colors"
+              className="text-slate-400 hover:text-plasma-orange transition-colors flex items-center gap-1"
             >
-              Contract: {contractAddress.slice(0, 8)}...{contractAddress.slice(-6)}
+              <span>Contract: {contractAddress.slice(0, 8)}...{contractAddress.slice(-6)}</span>
+              <ExternalLink className="w-3 h-3" />
             </a>
+            <span className="text-slate-600">|</span>
             <a
               href="https://docs.genlayer.com"
               target="_blank"
               rel="noreferrer"
-              className="text-slate-400 hover:text-plasma-orange transition-colors"
+              className="text-slate-400 hover:text-telemetry-cyan transition-colors"
             >
-              GenLayer Docs
+              Docs
+            </a>
+            <span className="text-slate-600">|</span>
+            <a
+              href="https://github.com/tuannguyen1995/AgentWildFire"
+              target="_blank"
+              rel="noreferrer"
+              className="text-slate-400 hover:text-white transition-colors"
+            >
+              GitHub
             </a>
           </div>
         </div>
@@ -569,9 +519,9 @@ export const App: React.FC = () => {
         isOpen={isTriggerOpen}
         onClose={() => {
           setIsTriggerOpen(false);
-          setActivePolicy(null);
+          setModalTargetPolicy(null);
         }}
-        policy={activePolicy}
+        policy={modalTargetPolicy}
         onSubmit={handleTriggerAlert}
         isLoading={isLoading}
       />
@@ -580,18 +530,18 @@ export const App: React.FC = () => {
         isOpen={isInspectorOpen}
         onClose={() => {
           setIsInspectorOpen(false);
-          setActivePolicy(null);
+          setModalTargetPolicy(null);
         }}
-        policy={activePolicy}
+        policy={modalTargetPolicy}
       />
 
       <AppealModal
         isOpen={isAppealOpen}
         onClose={() => {
           setIsAppealOpen(false);
-          setActivePolicy(null);
+          setModalTargetPolicy(null);
         }}
-        policy={activePolicy}
+        policy={modalTargetPolicy}
         onSubmit={handleAppeal}
         isLoading={isLoading}
       />
