@@ -11,7 +11,15 @@ if 'genlayer' not in sys.modules:
 
     class _Address:
         def __init__(self, val=""):
-            self.as_hex = str(val).lower()
+            if isinstance(val, int):
+                self.as_hex = f"0x{val:040x}".lower()
+            else:
+                self.as_hex = str(val).lower()
+            try:
+                clean_hex = self.as_hex.replace("0x", "")
+                self.as_bytes = bytes.fromhex(clean_hex)
+            except Exception:
+                self.as_bytes = b"\x00" * 20
 
         def __str__(self):
             return self.as_hex
@@ -115,11 +123,18 @@ class _MockCallResult:
 
 
 class _MockContractInstance:
-    def __init__(self, client, contract_path):
+    def __init__(self, client, contract_path, *deploy_args, **deploy_kwargs):
         self.client = client
         self.contract_path = contract_path
         self.caller = client.accounts[0]
         self.owner = client.accounts[0]
+        args_list = deploy_kwargs.get("args") or (deploy_args[0] if deploy_args else None)
+        if args_list and len(args_list) > 0 and args_list[0] is not None:
+            raw_own = args_list[0]
+            if isinstance(raw_own, int):
+                self.owner = f"0x{raw_own:040x}".lower()
+            else:
+                self.owner = str(raw_own).lower()
         self.policies = {}
         self.policy_ids = []
         self.policy_counter = 0
@@ -580,8 +595,8 @@ class _MockClient:
         ]
         self.provider = _MockProvider()
 
-    def deploy(self, contract_path):
-        return _MockContractInstance(self, contract_path)
+    def deploy(self, contract_path, *args, **kwargs):
+        return _MockContractInstance(self, contract_path, *args, **kwargs)
 
 
 @pytest.fixture

@@ -30,21 +30,53 @@ class ContractError(Exception):
     pass
 
 
-def _addr_str(addr: Address) -> str:
-    """Safely format an Address instance into a lowercase hex string."""
+def _to_address(val) -> Address:
+    """Converts any Address, int, or str into a valid GenLayer Address instance."""
+    if isinstance(val, Address):
+        return val
+    if isinstance(val, int):
+        hex_str = f"0x{val:040x}"
+        return Address(hex_str)
+    if isinstance(val, str):
+        clean = val.strip()
+        if clean.startswith("0x") or clean.startswith("0X"):
+            return Address(clean.lower())
+        try:
+            int_val = int(clean)
+            return Address(f"0x{int_val:040x}")
+        except ValueError:
+            return Address(clean.lower())
+    if isinstance(val, (bytes, bytearray)):
+        return Address("0x" + val.hex())
+    return Address(str(val))
+
+
+def _addr_str(addr) -> str:
+    """Safely format an Address or address-like value into a lowercase hex string."""
+    if addr is None:
+        return ZERO_ADDRESS
+    if isinstance(addr, int):
+        return f"0x{addr:040x}".lower()
     try:
         return addr.as_hex.lower()
     except Exception:
-        return str(addr).lower()
+        s = str(addr).lower()
+        if s.startswith("0x"):
+            return s
+        try:
+            int_val = int(s)
+            return f"0x{int_val:040x}".lower()
+        except Exception:
+            return s
 
 
 def _get_sender() -> Address:
     """Safely obtain transaction sender across GenVM runtime versions."""
     try:
-        return gl.message.sender_address
+        return _to_address(gl.message.sender_address)
     except Exception:
         try:
-            return gl.message.sender
+            return _to_address(gl.message.sender)
         except Exception:
             raise ContractError("Cannot resolve sender address.")
 
@@ -118,14 +150,22 @@ class Contract(gl.Contract):
     owner: Address
     claimable_balances: TreeMap[str, bigint]
 
-    def __init__(self, initial_owner: Address = Address(ZERO_ADDRESS)):
-        deployer = Address(ZERO_ADDRESS)
-        try:
-            deployer = _get_sender()
-        except Exception:
-            pass
+    def __init__(self, initial_owner = None):
+        target_owner = Address(ZERO_ADDRESS)
+        if initial_owner is not None:
+            try:
+                candidate = _to_address(initial_owner)
+                if _addr_str(candidate) != ZERO_ADDRESS:
+                    target_owner = candidate
+            except Exception:
+                pass
 
-        target_owner = initial_owner if _addr_str(initial_owner) != ZERO_ADDRESS else deployer
+        if _addr_str(target_owner) == ZERO_ADDRESS:
+            try:
+                target_owner = _get_sender()
+            except Exception:
+                pass
+
         self.owner = target_owner
         self.total_relief_locked = bigint(0)
         self.total_disasters_settled = u32(0)
@@ -138,13 +178,14 @@ class Contract(gl.Contract):
         if _addr_str(self.owner) == ZERO_ADDRESS:
             self.owner = _get_sender()
 
-    def _safe_transfer(self, recipient: Address, amount: bigint) -> None:
+    def _safe_transfer(self, recipient, amount: bigint) -> None:
         """Transfers native GEN tokens with Pull-Payment fallback to eliminate lost funds."""
         if amount <= bigint(0):
             return
-        rec_str = _addr_str(recipient)
+        rec_addr = _to_address(recipient)
+        rec_str = _addr_str(rec_addr)
         try:
-            gl.get_contract_at(recipient).emit_transfer(value=u256(int(amount)))
+            gl.get_contract_at(rec_addr).emit_transfer(value=u256(int(amount)))
         except Exception:
             curr = self.claimable_balances.get(rec_str, bigint(0))
             self.claimable_balances[rec_str] = curr + amount
@@ -173,7 +214,7 @@ class Contract(gl.Contract):
     @gl.public.write.payable
     def create_relief_policy(
         self,
-        beneficiary_address: Address,
+        beneficiary_address,
         forest_zone_polygon: str,
         min_frp_threshold_mw: u32,
         duration_blocks: u32
@@ -188,8 +229,9 @@ class Contract(gl.Contract):
         if len(clean_poly) < 8:
             raise ContractError("Valid forest zone coordinate polygon required (>= 8 chars).")
 
+        ben_addr = _to_address(beneficiary_address)
         sender = _get_sender()
-        if _addr_str(sender) == _addr_str(beneficiary_address):
+        if _addr_str(sender) == _addr_str(ben_addr):
             raise ContractError("Sponsor cannot designate themselves as relief beneficiary.")
 
         dur_secs = bigint(int(duration_blocks) * 3 if int(duration_blocks) > 0 else int(DEFAULT_POLICY_DURATION_SECONDS))
@@ -203,7 +245,7 @@ class Contract(gl.Contract):
         new_policy = WildfirePolicy(
             policy_id=policy_id,
             sponsor=sender,
-            beneficiary=beneficiary_address,
+            beneficiary=ben_addr,
             dispute_initiator=empty_addr,
             escrow_amount=escrow,
             dispute_bond=bigint(0),
@@ -791,7 +833,7 @@ Respond ONLY with valid JSON:
         return json.dumps(policies_list)
 
     @gl.public.view
-    def get_claimable_balance(self, account: Address) -> str:
+    def get_claimable_balance(self, account) -> str:
         return str(self.claimable_balances.get(_addr_str(account), bigint(0)))
 
     @gl.public.view

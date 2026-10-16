@@ -337,3 +337,18 @@ def test_agentwildfire_pull_payment_claim(client):
 
     contract.connect(beneficiary).claim_payout()
     assert int(contract.get_claimable_balance(args=[beneficiary]).call()) == 0
+
+
+def test_agentwildfire_deploy_with_int_or_str_address(client):
+    """Proves that contract safely initializes when Studio passes an integer or string address."""
+    # Deploy with integer address argument (as GenLayer Studio does: 312826998849709214553341560051459171502959144246)
+    int_addr = 312826998849709214553341560051459171502959144246
+    contract_int = client.deploy("contracts/contract.py", args=[int_addr])
+    stats = json.loads(contract_int.get_stats().call())
+    assert stats["owner"] == "0x36cba5d4d4d0a2dc6d57e81d8e82385a08c8ad36"
+
+    # Also deploy with no arguments
+    contract_empty = client.deploy("contracts/contract.py")
+    stats_empty = json.loads(contract_empty.get_stats().call())
+    assert stats_empty["owner"] != ""
+
