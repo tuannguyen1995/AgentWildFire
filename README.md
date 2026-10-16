@@ -55,12 +55,12 @@ Wildfires across the world—from the California Sierra Nevada and the Mediterra
 | **Network** | GenLayer Studionet |
 | **Chain ID** | `61999` (Hex: `0xF22F`) |
 | **RPC Endpoint** | `https://studio.genlayer.com/api` |
-| **Contract Address** | `0x07e754c6E2F89f422F4AF81Ff2e42028A9fC913d` |
-| **Transaction Hash** | `0x74457b0730e66f95e6663751ac0addbbaf4e69011af698734504610772b843aa` |
+| **Contract Address** | `0x44575074343c0703C2FbAecFd0cEeF4Ac9aA831c` |
+| **Transaction Hash** | `Contract Deployed via GenLayer Studio` |
 | **Receipt Status** | `5` (ACCEPTED / FINALIZED) |
 | **Live Web3 dApp** | [https://agentwildfire.vercel.app](https://agentwildfire.vercel.app) |
 | **GitHub Repository** | [https://github.com/tuannguyen1995/AgentWildFire](https://github.com/tuannguyen1995/AgentWildFire) |
-| **GenLayer Studio View** | [View on GenLayer Studio](https://studio.genlayer.com/contracts/0x07e754c6E2F89f422F4AF81Ff2e42028A9fC913d) |
+| **GenLayer Studio View** | [View on GenLayer Studio](https://studio.genlayer.com/contracts/0x44575074343c0703C2FbAecFd0cEeF4Ac9aA831c) |
 
 ---
 
