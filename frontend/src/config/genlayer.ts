@@ -80,17 +80,20 @@ export const STATUS_SETTLED_FALSE_ALARM = 5;
 export const STATUS_DISPUTED = 6;
 export const STATUS_EXPIRED_RECLAIMED = 7;
 export const STATUS_UNRESOLVED = 8;
+export const STATUS_CIRCUIT_BREAKER_HALTED = 9;
 
 export interface WildfirePolicyData {
   policy_id: string;
   sponsor: string;
   beneficiary: string;
   dispute_initiator: string;
+  reporter_address?: string;
   escrow_amount: string;
   dispute_bond: string;
   forest_zone_polygon: string;
   min_frp_threshold_mw: number;
   satellite_feed_url: string;
+  secondary_satellite_url?: string;
   evidence_hash: string;
   status: number;
   verdict: string;
@@ -99,6 +102,7 @@ export interface WildfirePolicyData {
   confidence: number;
   measured_peak_frp_mw: number;
   burned_area_hectares: number;
+  tri_lens_breakdown?: string;
   created_at_time: string;
   expires_at_time: string;
   audit_completed_time: string;
@@ -110,6 +114,7 @@ export interface ProtocolStats {
   total_policies: number;
   total_relief_locked: string;
   total_disasters_settled: number;
+  circuit_breaker_triggered_count?: number;
   owner?: string;
 }
 
@@ -492,15 +497,33 @@ export async function triggerWildfireAlert(
   contractAddress: string,
   userAddress: string,
   policyId: string,
-  satelliteFeedUrl: string
+  satelliteFeedUrl: string,
+  secondarySatelliteUrl: string = ''
 ) {
+  const cleanSec = secondarySatelliteUrl ? secondarySatelliteUrl.trim() : '';
+  const args = cleanSec
+    ? [policyId, satelliteFeedUrl.trim(), cleanSec]
+    : [policyId, satelliteFeedUrl.trim()];
+
   return await writeContract(
     contractAddress,
     userAddress,
     'trigger_wildfire_alert',
-    [policyId, satelliteFeedUrl],
+    args,
     0n
   );
+}
+
+export async function fetchReporterReputation(
+  contractAddress: string,
+  account: string
+): Promise<number> {
+  try {
+    const res = await readContract('get_reporter_reputation', [account], contractAddress);
+    return Number(res) || 100;
+  } catch {
+    return 100;
+  }
 }
 
 export async function adjudicateWildfireSeverity(

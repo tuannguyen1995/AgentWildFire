@@ -200,12 +200,12 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleTriggerAlert = async (policyId: string, satelliteUrl: string) => {
+  const handleTriggerAlert = async (policyId: string, satelliteUrl: string, secondarySatelliteUrl?: string) => {
     if (!account) throw new Error('Please connect wallet');
     setIsLoading(true);
     try {
-      await triggerWildfireAlert(contractAddress, account, policyId, satelliteUrl);
-      showToast('success', `Satellite wildfire alert filed for Zone #${policyId}. Ready for AI Remote Sensing Jury!`);
+      await triggerWildfireAlert(contractAddress, account, policyId, satelliteUrl, secondarySatelliteUrl);
+      showToast('success', `Satellite wildfire alert filed for Zone #${policyId}. Ready for Tri-Lens AI Magistrate!`);
       await loadData();
     } catch (err: any) {
       showToast('error', err?.message || 'Failed to submit satellite alert');

@@ -155,6 +155,15 @@ export function getStatusMeta(status: number): StatusMeta {
         accentClass: 'text-rose-400',
         description: 'Satellite endpoint unreachable or canary failure. Escrow preserved in non-settling lock.',
       };
+    case 9:
+      return {
+        code: 9,
+        label: 'CIRCUIT BREAKER HALTED',
+        badgeClass: 'bg-red-950/60 text-red-400 border-red-500/80 animate-pulse',
+        borderClass: 'border-red-600/60',
+        accentClass: 'text-red-400',
+        description: 'Autonomous Circuit Breaker engaged: Telemetry anomaly (>50k MW or sensor spoofing). 100% escrow preserved.',
+      };
     default:
       return {
         code: status,

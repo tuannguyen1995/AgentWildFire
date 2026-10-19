@@ -205,6 +205,19 @@ export const MissionCockpit: React.FC<MissionCockpitProps> = ({
           )}
         </div>
 
+        {/* Autonomous Circuit Breaker Alert Banner */}
+        {policy.status === 9 && (
+          <div className="p-3.5 rounded-2xl bg-red-950/60 border border-red-500/80 text-red-200 space-y-1 animate-pulse">
+            <div className="flex items-center gap-1.5 font-heading font-bold text-xs text-red-400 uppercase tracking-wider">
+              <AlertTriangle className="w-4 h-4 text-red-400" />
+              <span>Autonomous Circuit Breaker Engaged</span>
+            </div>
+            <p className="text-[11px] leading-relaxed">
+              Telemetry anomaly or adversarial sensor spoofing detected (&gt;50k MW). 100% of escrow funds are locked and preserved to prevent fraudulent draining.
+            </p>
+          </div>
+        )}
+
         {/* AI Remote Sensing Magistrate Verdict Preview */}
         <div className="p-3.5 rounded-2xl bg-warroom-950 border border-warroom-700 space-y-1.5">
           <div className="flex items-center justify-between">
@@ -219,7 +232,47 @@ export const MissionCockpit: React.FC<MissionCockpitProps> = ({
           <p className="text-[11px] text-slate-300 font-sans italic bg-warroom-900/60 p-2 rounded-lg border border-warroom-800">
             &quot;{policy.reason || 'No remote sensing jury adjudication performed yet.'}&quot;
           </p>
+
+          {/* Tri-Lens AI Multi-Perspective Consensus Breakdown */}
+          {policy.tri_lens_breakdown && (
+            <div className="mt-2 pt-2 border-t border-warroom-800/80">
+              <div className="text-[10px] font-mono text-telemetry-cyan font-semibold flex items-center gap-1 mb-1">
+                <ShieldCheck className="w-3 h-3 text-telemetry-cyan" />
+                <span>Tri-Lens Magistrate Consensus Protocol:</span>
+              </div>
+              <div className="text-[10.5px] text-slate-300 font-mono bg-warroom-900/80 p-2 rounded border border-warroom-750 leading-relaxed">
+                {policy.tri_lens_breakdown}
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* Observation Feeds */}
+        {policy.satellite_feed_url && (
+          <div className="p-3 rounded-xl bg-warroom-950 border border-warroom-700 space-y-1 text-[11px]">
+            <div className="text-[10px] font-mono text-slate-400 uppercase flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <Satellite className="w-3 h-3 text-plasma-orange" />
+                Telemetry Sources
+              </span>
+              {policy.secondary_satellite_url && (
+                <span className="text-telemetry-emerald text-[9px] font-bold">Multi-Satellite Corroborated</span>
+              )}
+            </div>
+            <div className="space-y-1 font-mono text-[10px] truncate">
+              <div className="flex items-center gap-1 text-slate-300 truncate">
+                <span className="text-slate-500">Primary:</span>
+                <span className="text-plasma-orange truncate">{policy.satellite_feed_url}</span>
+              </div>
+              {policy.secondary_satellite_url && (
+                <div className="flex items-center gap-1 text-slate-300 truncate">
+                  <span className="text-slate-500">Secondary:</span>
+                  <span className="text-telemetry-cyan truncate">{policy.secondary_satellite_url}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Geofence Polygon Coordinates */}
         <div className="p-3.5 rounded-2xl bg-warroom-950 border border-warroom-700">
@@ -241,7 +294,7 @@ export const MissionCockpit: React.FC<MissionCockpitProps> = ({
           </div>
         </div>
 
-        {/* Stakeholder Addresses */}
+        {/* Stakeholder Addresses & First Responder */}
         <div className="grid grid-cols-2 gap-2 font-mono text-[10px] pt-1 border-t border-warroom-700/60">
           <div>
             <span className="text-slate-500">Sponsor DAO: </span>
@@ -255,6 +308,12 @@ export const MissionCockpit: React.FC<MissionCockpitProps> = ({
               {truncateAddress(policy.beneficiary)} {isBeneficiary ? '(You)' : ''}
             </div>
           </div>
+          {policy.reporter_address && policy.reporter_address !== '0x0000000000000000000000000000000000000000' && (
+            <div className="col-span-2 pt-1 border-t border-warroom-800/60 flex items-center justify-between">
+              <span className="text-slate-500">First Responder Oracle:</span>
+              <span className="text-telemetry-emerald font-semibold">{truncateAddress(policy.reporter_address)}</span>
+            </div>
+          )}
         </div>
 
       </div>

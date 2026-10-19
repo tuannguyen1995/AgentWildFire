@@ -292,7 +292,7 @@ def test_agentwildfire_unresolved_telemetry_fetch_failure(client):
     # Cannot finalize an unresolved policy
     with pytest.raises(Exception) as exc_info:
         contract.connect(beneficiary).finalize_settlement(args=[policy_id])
-    assert "unresolved error state" in str(exc_info.value)
+    assert "unresolved or circuit-breaker halted state" in str(exc_info.value)
 
 
 def test_agentwildfire_cancel_or_reclaim_expired(client):
@@ -351,4 +351,191 @@ def test_agentwildfire_deploy_with_int_or_str_address(client):
     contract_empty = client.deploy("contracts/contract.py")
     stats_empty = json.loads(contract_empty.get_stats().call())
     assert stats_empty["owner"] != ""
+
+
+def test_agentwildfire_tri_lens_multi_satellite_telemetry_fusion(client):
+    """Proves that multi-satellite feeds (NASA FIRMS + Sentinel) are ingested and Tri-Lens breakdown recorded."""
+    contract = client.deploy("contracts/contract.py")
+    sponsor = client.accounts[0]
+    beneficiary = client.accounts[1]
+    responder = client.accounts[2]
+
+    tx_create = contract.connect(sponsor).create_relief_policy(
+        args=[str(beneficiary), "POLYGON((-121.5 39.5, -121.0 39.5, -121.0 40.0, -121.5 40.0))", 300, 6000],
+        value=2000000000000000000  # 2.0 GEN
+    )
+    policy_id = str(tx_create.return_value)
+
+    firms_url = "https://firms.modaps.eosdis.nasa.gov/api/area/csv/MODIS_NRT/california_fire.json"
+    sentinel_url = "https://sentinel-hub.com/api/v1/wildfire_thermal_zone_42.json"
+
+    # Trigger with both primary and secondary feeds
+    contract.connect(responder).trigger_wildfire_alert(
+        args=[policy_id, firms_url, sentinel_url]
+    )
+
+    client.provider.make_request(
+        method="sim_installMocks",
+        params={
+            "llm_mocks": {
+                ".*": json.dumps({
+                    "canary": "CANARY_AGENT_WILDFIRE_RELIEF_V1",
+                    "verdict": "DISASTER_RELIEF_CONFIRMED",
+                    "confidence": 99,
+                    "measured_peak_frp_mw": 520,
+                    "burned_area_hectares": 2400,
+                    "tri_lens_breakdown": "Lens A (Radiometric): 520 MW peak FRP confirmed across FIRMS & Sentinel. Lens B (Behavior): Uncontrolled crown fire spread. Lens C (Actuarial): Exceeds 300 MW threshold.",
+                    "reason": "Multi-satellite thermal corroboration verified severe wildfire breach."
+                })
+            },
+            "web_mocks": {
+                firms_url: {"status": 200, "body": '{"latitude": 39.75, "longitude": -121.3, "frp": 520.0}'},
+                sentinel_url: {"status": 200, "body": '{"band_frp": 518.5, "swir_anomaly": true}'}
+            }
+        }
+    )
+
+    contract.connect(beneficiary).adjudicate_wildfire_severity(args=[policy_id])
+
+    p_data = json.loads(contract.get_policy(args=[policy_id]).call())
+    assert p_data["status"] == 2  # STATUS_AWAITING_PAYOUT
+    assert p_data["secondary_satellite_url"] == sentinel_url
+    assert p_data["reporter_address"] == str(responder).lower()
+    assert "Lens A (Radiometric)" in p_data["tri_lens_breakdown"]
+
+
+def test_agentwildfire_circuit_breaker_safeguard(client):
+    """Proves that anomalous / spoofed telemetry trips the autonomous circuit breaker to protect escrow."""
+    contract = client.deploy("contracts/contract.py")
+    sponsor = client.accounts[0]
+    beneficiary = client.accounts[1]
+
+    tx_create = contract.connect(sponsor).create_relief_policy(
+        args=[str(beneficiary), "POLYGON((-120 38, -119 38, -119 39, -120 39))", 300, 6000],
+        value=3000000000000000000  # 3.0 GEN
+    )
+    policy_id = str(tx_create.return_value)
+
+    firms_url = "https://firms.modaps.eosdis.nasa.gov/api/area/csv/MODIS_NRT/spoofed_anomaly.json"
+    contract.connect(beneficiary).trigger_wildfire_alert(args=[policy_id, firms_url])
+
+    # Impossible sensor anomaly: 75,000 MW (>50,000 MW circuit breaker limit)
+    client.provider.make_request(
+        method="sim_installMocks",
+        params={
+            "llm_mocks": {
+                ".*": json.dumps({
+                    "canary": "CANARY_AGENT_WILDFIRE_RELIEF_V1",
+                    "verdict": "CIRCUIT_BREAKER_TRIGGERED",
+                    "confidence": 99,
+                    "measured_peak_frp_mw": 75000,
+                    "burned_area_hectares": 99999,
+                    "tri_lens_breakdown": "CIRCUIT BREAKER: Unphysical 75k MW sensor spike indicates telemetry spoofing or instrument blowout.",
+                    "reason": "Anomalous sensor readings tripped circuit breaker."
+                })
+            },
+            "web_mocks": {
+                firms_url: {"status": 200, "body": '{"frp": 75000.0}'}
+            }
+        }
+    )
+
+    contract.connect(sponsor).adjudicate_wildfire_severity(args=[policy_id])
+
+    p_data = json.loads(contract.get_policy(args=[policy_id]).call())
+    assert p_data["status"] == 9  # STATUS_CIRCUIT_BREAKER_HALTED
+    assert p_data["verdict"] == "CIRCUIT_BREAKER_TRIGGERED"
+    assert "CIRCUIT BREAKER ENGAGED" in p_data["reason"]
+
+    # Settlement must be completely halted
+    with pytest.raises(Exception) as exc_info:
+        contract.connect(beneficiary).finalize_settlement(args=[policy_id])
+    assert "circuit-breaker halted" in str(exc_info.value)
+
+    # Check stats counter
+    stats = json.loads(contract.get_stats().call())
+    assert stats["circuit_breaker_triggered_count"] == 1
+
+
+def test_agentwildfire_reporter_reputation_ledger(client):
+    """Proves that truthful reporters earn reputation points while false alarms slash reputation."""
+    contract = client.deploy("contracts/contract.py")
+    sponsor = client.accounts[0]
+    beneficiary = client.accounts[1]
+    responder = client.accounts[2]
+
+    # Baseline reputation is 100
+    init_rep = contract.get_reporter_reputation(args=[responder]).call()
+    assert int(init_rep) == 100
+
+    # Policy 1: Verified Wildfire -> Reporter rewarded +25 points
+    tx1 = contract.connect(sponsor).create_relief_policy(
+        args=[str(beneficiary), "POLYGON((-121 39, -120 39, -120 40, -121 40))", 200, 6000],
+        value=1000000000000000000
+    )
+    p1 = str(tx1.return_value)
+    nasa_url = "https://nasa.gov/telemetry/verified_burn.json"
+    contract.connect(responder).trigger_wildfire_alert(args=[p1, nasa_url])
+
+    client.provider.make_request(
+        method="sim_installMocks",
+        params={
+            "llm_mocks": {
+                ".*": json.dumps({
+                    "canary": "CANARY_AGENT_WILDFIRE_RELIEF_V1",
+                    "verdict": "DISASTER_RELIEF_CONFIRMED",
+                    "confidence": 95,
+                    "measured_peak_frp_mw": 350,
+                    "burned_area_hectares": 800,
+                    "tri_lens_breakdown": "Confirmed wildfire breach.",
+                    "reason": "Active wildfire confirmed."
+                })
+            },
+            "web_mocks": {
+                nasa_url: {"status": 200, "body": '{"frp": 350}'}
+            }
+        }
+    )
+
+    contract.connect(beneficiary).adjudicate_wildfire_severity(args=[p1])
+    contract.advance_time(75)
+    contract.connect(beneficiary).finalize_settlement(args=[p1])
+
+    rep_after_confirmed = contract.get_reporter_reputation(args=[responder]).call()
+    assert int(rep_after_confirmed) == 125  # 100 + 25
+
+    # Policy 2: False Alarm -> Reporter penalized -15 points
+    tx2 = contract.connect(sponsor).create_relief_policy(
+        args=[str(beneficiary), "POLYGON((-121 39, -120 39, -120 40, -121 40))", 200, 6000],
+        value=1000000000000000000
+    )
+    p2 = str(tx2.return_value)
+    contract.connect(responder).trigger_wildfire_alert(args=[p2, nasa_url])
+
+    client.provider.make_request(
+        method="sim_installMocks",
+        params={
+            "llm_mocks": {
+                ".*": json.dumps({
+                    "canary": "CANARY_AGENT_WILDFIRE_RELIEF_V1",
+                    "verdict": "FALSE_ALARM_DISMISSED",
+                    "confidence": 95,
+                    "measured_peak_frp_mw": 20,
+                    "burned_area_hectares": 5,
+                    "tri_lens_breakdown": "Controlled burn, no emergency.",
+                    "reason": "Zero emergency breach."
+                })
+            },
+            "web_mocks": {
+                nasa_url: {"status": 200, "body": '{"frp": 20}'}
+            }
+        }
+    )
+
+    contract.connect(beneficiary).adjudicate_wildfire_severity(args=[p2])
+    contract.advance_time(75)
+    contract.connect(sponsor).finalize_settlement(args=[p2])
+
+    rep_after_false_alarm = contract.get_reporter_reputation(args=[responder]).call()
+    assert int(rep_after_false_alarm) == 110  # 125 - 15
 

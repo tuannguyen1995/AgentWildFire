@@ -69,6 +69,7 @@ STATUS_SETTLED_FALSE_ALARM = 5
 STATUS_DISPUTED = 6
 STATUS_EXPIRED_RECLAIMED = 7
 STATUS_UNRESOLVED = 8
+STATUS_CIRCUIT_BREAKER_HALTED = 9
 
 ACCREDITED_WILDFIRE_SOURCES = [
     "firms.modaps.eosdis.nasa.gov",
@@ -140,7 +141,9 @@ class _MockContractInstance:
         self.policy_counter = 0
         self.total_relief_locked = 0
         self.total_disasters_settled = 0
+        self.circuit_breaker_triggered_count = 0
         self.claimable_balances = {}
+        self.reporter_reputation = {}
         self.simulated_time = 1760000000
 
     def connect(self, account):
@@ -152,6 +155,20 @@ class _MockContractInstance:
 
     def advance_time(self, seconds: int):
         self.simulated_time += seconds
+
+    def _reward_reporter(self, reporter: str):
+        r = str(reporter).lower()
+        if r == ZERO_ADDRESS:
+            return
+        curr = self.reporter_reputation.get(r, 100)
+        self.reporter_reputation[r] = min(1000, curr + 25)
+
+    def _slash_reporter(self, reporter: str):
+        r = str(reporter).lower()
+        if r == ZERO_ADDRESS:
+            return
+        curr = self.reporter_reputation.get(r, 100)
+        self.reporter_reputation[r] = max(10, curr - 15)
 
     def create_relief_policy(self, args, value=0):
         escrow = int(value)
@@ -180,11 +197,13 @@ class _MockContractInstance:
             "sponsor": self.caller,
             "beneficiary": beneficiary,
             "dispute_initiator": ZERO_ADDRESS,
+            "reporter_address": ZERO_ADDRESS,
             "escrow_amount": str(escrow),
             "dispute_bond": "0",
             "forest_zone_polygon": poly,
             "min_frp_threshold_mw": min_frp,
             "satellite_feed_url": "",
+            "secondary_satellite_url": "",
             "evidence_hash": "",
             "status": STATUS_POLICY_ACTIVE,
             "verdict": "PENDING",
@@ -193,6 +212,7 @@ class _MockContractInstance:
             "confidence": 0,
             "measured_peak_frp_mw": 0,
             "burned_area_hectares": 0,
+            "tri_lens_breakdown": "",
             "created_at_time": str(curr_time),
             "expires_at_time": str(expires_at),
             "audit_completed_time": "0",
@@ -218,13 +238,19 @@ class _MockContractInstance:
         if not _is_accredited_wildfire_source(clean_url):
             raise ValueError("Telemetry unauthenticated: Must originate from an accredited satellite source (NASA FIRMS, Sentinel, Copernicus).")
 
+        clean_sec_url = str(args[2]).strip() if len(args) > 2 and args[2] else ""
+        if clean_sec_url and not _is_accredited_wildfire_source(clean_sec_url):
+            raise ValueError("Secondary telemetry unauthenticated: Must originate from an accredited satellite source.")
+
         curr_time = self._get_time()
         if curr_time > int(p["expires_at_time"]):
             raise ValueError("Coverage duration for this relief policy has expired.")
 
+        p["reporter_address"] = self.caller
         p["satellite_feed_url"] = clean_url
+        p["secondary_satellite_url"] = clean_sec_url
         p["status"] = STATUS_ALERT_TRIGGERED
-        p["reason"] = "Wildfire thermal alert triggered. Ready for AI Satellite Tribunal adjudication."
+        p["reason"] = "Wildfire thermal alert triggered with satellite feeds. Ready for Tri-Lens AI Magistrate adjudication."
         return _MockTxResult(None)
 
     def adjudicate_wildfire_severity(self, args):
@@ -289,23 +315,34 @@ class _MockContractInstance:
             return _MockTxResult(None)
 
         v_res = str(parsed.get("verdict", "")).upper().strip()
-        if v_res not in {"DISASTER_RELIEF_CONFIRMED", "PARTIAL_RELIEF_GRANTED", "FALSE_ALARM_DISMISSED"}:
+        if v_res not in {"DISASTER_RELIEF_CONFIRMED", "PARTIAL_RELIEF_GRANTED", "FALSE_ALARM_DISMISSED", "CIRCUIT_BREAKER_TRIGGERED"}:
             p["status"] = STATUS_UNRESOLVED
             p["verdict"] = "UNRESOLVED_PARSE_FAILED"
             p["reason"] = f"Unsupported verdict '{v_res}' returned."
             p["audit_completed_time"] = "0"
             return _MockTxResult(None)
 
+        frp_val = int(parsed.get("measured_peak_frp_mw", 0))
+        if frp_val > 50000:
+            v_res = "CIRCUIT_BREAKER_TRIGGERED"
+
         p["verdict"] = v_res
         p["confidence"] = int(parsed.get("confidence", 85))
-        p["measured_peak_frp_mw"] = int(parsed.get("measured_peak_frp_mw", 0))
+        p["measured_peak_frp_mw"] = frp_val
         p["burned_area_hectares"] = int(parsed.get("burned_area_hectares", 0))
+        p["tri_lens_breakdown"] = str(parsed.get("tri_lens_breakdown", "Tri-Lens consensus analysis completed."))
         p["reason"] = str(parsed.get("reason", "Thermal observation analysis concluded."))
 
-        curr_time = self._get_time()
-        p["original_verdict"] = v_res
-        p["status"] = STATUS_AWAITING_PAYOUT
-        p["audit_completed_time"] = str(curr_time)
+        if v_res == "CIRCUIT_BREAKER_TRIGGERED":
+            p["status"] = STATUS_CIRCUIT_BREAKER_HALTED
+            p["audit_completed_time"] = "0"
+            self.circuit_breaker_triggered_count += 1
+            p["reason"] = "[CIRCUIT BREAKER ENGAGED] Telemetry anomaly (>50k MW or sensor spoofing). Escrow preserved."
+        else:
+            curr_time = self._get_time()
+            p["original_verdict"] = v_res
+            p["status"] = STATUS_AWAITING_PAYOUT
+            p["audit_completed_time"] = str(curr_time)
         return _MockTxResult(None)
 
     def appeal_verdict(self, args, value=0):
@@ -422,6 +459,7 @@ class _MockContractInstance:
             p["verdict"] = "DISASTER_RELIEF_CONFIRMED"
             p["reason"] = f"[APPEAL UPHELD] {app_reason}"
             self._safe_transfer(p["beneficiary"], escrow_val)
+            self._reward_reporter(p["reporter_address"])
             if not is_sponsor_appellant:
                 self._safe_transfer(p["dispute_initiator"], bond_val)
             else:
@@ -436,12 +474,14 @@ class _MockContractInstance:
             self._safe_transfer(p["beneficiary"], payout)
             self._safe_transfer(p["sponsor"], refund)
             self._safe_transfer(p["dispute_initiator"], bond_val)
+            self._reward_reporter(p["reporter_address"])
 
         elif app_verdict == "APPEAL_UPHELD_FALSE_ALARM":
             p["status"] = STATUS_SETTLED_FALSE_ALARM
             p["verdict"] = "FALSE_ALARM_DISMISSED"
             p["reason"] = f"[APPEAL RESOLUTION] {app_reason}"
             self._safe_transfer(p["sponsor"], escrow_val)
+            self._slash_reporter(p["reporter_address"])
             if is_sponsor_appellant:
                 self._safe_transfer(p["dispute_initiator"], bond_val)
             else:
@@ -456,6 +496,7 @@ class _MockContractInstance:
                 p["status"] = STATUS_SETTLED_DISASTER_PAID
                 p["verdict"] = "DISASTER_RELIEF_CONFIRMED"
                 self._safe_transfer(p["beneficiary"], escrow_val)
+                self._reward_reporter(p["reporter_address"])
             elif p["original_verdict"] == "PARTIAL_RELIEF_GRANTED":
                 p["status"] = STATUS_SETTLED_PARTIAL_RELIEF
                 p["verdict"] = "PARTIAL_RELIEF_GRANTED"
@@ -463,10 +504,12 @@ class _MockContractInstance:
                 refund = escrow_val - payout
                 self._safe_transfer(p["beneficiary"], payout)
                 self._safe_transfer(p["sponsor"], refund)
+                self._reward_reporter(p["reporter_address"])
             else:
                 p["status"] = STATUS_SETTLED_FALSE_ALARM
                 p["verdict"] = "FALSE_ALARM_DISMISSED"
                 self._safe_transfer(p["sponsor"], escrow_val)
+                self._slash_reporter(p["reporter_address"])
 
         return _MockTxResult(None)
 
@@ -476,8 +519,8 @@ class _MockContractInstance:
             raise ValueError(f"Policy {pid} does not exist.")
 
         p = self.policies[pid]
-        if p["status"] == STATUS_UNRESOLVED or p["verdict"].startswith("UNRESOLVED_") or p["verdict"].startswith("APPEAL_UNRESOLVED_"):
-            raise ValueError("Cannot settle policy in an unresolved error state. Escrow remains protected.")
+        if p["status"] in (STATUS_UNRESOLVED, STATUS_CIRCUIT_BREAKER_HALTED) or p["verdict"].startswith("UNRESOLVED_") or p["verdict"].startswith("APPEAL_UNRESOLVED_"):
+            raise ValueError("Cannot settle policy in an unresolved or circuit-breaker halted state. Escrow remains protected.")
 
         if p["status"] != STATUS_AWAITING_PAYOUT:
             raise ValueError("Policy is not awaiting settlement payout.")
@@ -497,15 +540,18 @@ class _MockContractInstance:
         if p["verdict"] == "DISASTER_RELIEF_CONFIRMED":
             p["status"] = STATUS_SETTLED_DISASTER_PAID
             self._safe_transfer(p["beneficiary"], escrow_val)
+            self._reward_reporter(p["reporter_address"])
         elif p["verdict"] == "PARTIAL_RELIEF_GRANTED":
             p["status"] = STATUS_SETTLED_PARTIAL_RELIEF
             payout = (escrow_val * 40) // 100
             refund = escrow_val - payout
             self._safe_transfer(p["beneficiary"], payout)
             self._safe_transfer(p["sponsor"], refund)
+            self._reward_reporter(p["reporter_address"])
         else:
             p["status"] = STATUS_SETTLED_FALSE_ALARM
             self._safe_transfer(p["sponsor"], escrow_val)
+            self._slash_reporter(p["reporter_address"])
 
         return _MockTxResult(None)
 
@@ -519,7 +565,7 @@ class _MockContractInstance:
             raise ValueError("Role Violation: Only sponsor can reclaim expired relief escrow.")
 
         curr_time = self._get_time()
-        if p["status"] in (STATUS_POLICY_ACTIVE, STATUS_UNRESOLVED):
+        if p["status"] in (STATUS_POLICY_ACTIVE, STATUS_UNRESOLVED, STATUS_CIRCUIT_BREAKER_HALTED):
             if curr_time < int(p["expires_at_time"]):
                 raise ValueError(f"Cannot reclaim: Policy is still active (expires at {int(p['expires_at_time'])}).")
         else:
@@ -527,7 +573,7 @@ class _MockContractInstance:
 
         p["status"] = STATUS_EXPIRED_RECLAIMED
         p["verdict"] = "EXPIRED_CLEAN"
-        p["reason"] = "Policy duration completed without active disaster triggers. Escrow reclaimed by sponsor."
+        p["reason"] = "Policy duration completed without active disaster triggers or preserved via circuit breaker. Escrow reclaimed by sponsor."
 
         escrow_val = int(p["escrow_amount"])
         p["escrow_amount"] = "0"
@@ -564,11 +610,17 @@ class _MockContractInstance:
         account = str(args[0]).lower().strip()
         return _MockCallResult(str(self.claimable_balances.get(account, 0)))
 
+    def get_reporter_reputation(self, args):
+        account = str(args[0]).lower().strip()
+        rep = self.reporter_reputation.get(account, 100)
+        return _MockCallResult(max(10, rep))
+
     def get_stats(self):
         stats = {
             "total_policies": len(self.policy_ids),
             "total_relief_locked": str(self.total_relief_locked),
             "total_disasters_settled": self.total_disasters_settled,
+            "circuit_breaker_triggered_count": self.circuit_breaker_triggered_count,
             "owner": self.owner,
         }
         return _MockCallResult(json.dumps(stats))

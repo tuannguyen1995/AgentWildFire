@@ -6,7 +6,7 @@ interface TriggerAlertModalProps {
   isOpen: boolean;
   onClose: () => void;
   policy: WildfirePolicyData | null;
-  onSubmit: (policyId: string, satelliteUrl: string) => Promise<void>;
+  onSubmit: (policyId: string, satelliteUrl: string, secondarySatelliteUrl?: string) => Promise<void>;
   isLoading: boolean;
 }
 
@@ -65,23 +65,30 @@ export const TriggerAlertModal: React.FC<TriggerAlertModalProps> = ({
   isLoading,
 }) => {
   const [satelliteUrl, setSatelliteUrl] = useState(ACCREDITED_PRESETS[0].url);
+  const [secondarySatelliteUrl, setSecondarySatelliteUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen || !policy) return null;
 
   const validSource = isAccredited(satelliteUrl);
+  const validSecSource = !secondarySatelliteUrl.trim() || isAccredited(secondarySatelliteUrl);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
     if (!validSource) {
-      setError('Telemetry unauthenticated: URL must strictly originate from an accredited satellite source.');
+      setError('Telemetry unauthenticated: Primary URL must strictly originate from an accredited satellite source.');
+      return;
+    }
+
+    if (!validSecSource) {
+      setError('Telemetry unauthenticated: Secondary URL must strictly originate from an accredited satellite source.');
       return;
     }
 
     try {
-      await onSubmit(policy.policy_id, satelliteUrl.trim());
+      await onSubmit(policy.policy_id, satelliteUrl.trim(), secondarySatelliteUrl.trim());
       onClose();
     } catch (err: any) {
       setError(err?.message || 'Failed to trigger wildfire alert.');
@@ -169,7 +176,7 @@ export const TriggerAlertModal: React.FC<TriggerAlertModalProps> = ({
           {/* Telemetry URL Input */}
           <div>
             <label className="block text-xs font-medium text-slate-300 mb-1.5 flex items-center justify-between">
-              <span>Live Observation Endpoint (JSON/GeoJSON/CSV)</span>
+              <span>Primary Satellite Endpoint (NASA FIRMS / Sentinel)</span>
               <span className={`text-[10px] font-mono ${validSource ? 'text-telemetry-emerald' : 'text-rose-400'}`}>
                 {validSource ? '✓ Accredited Source' : '✗ Unaccredited Domain'}
               </span>
@@ -182,6 +189,28 @@ export const TriggerAlertModal: React.FC<TriggerAlertModalProps> = ({
               placeholder="https://firms.modaps.eosdis.nasa.gov/..."
               className="w-full px-3.5 py-2.5 rounded-xl bg-warroom-900 border border-warroom-700 font-mono text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-plasma-orange"
             />
+          </div>
+
+          {/* Secondary Telemetry URL Input (Multi-Satellite Corroboration) */}
+          <div>
+            <label className="block text-xs font-medium text-slate-300 mb-1.5 flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <span>Secondary Satellite Feed (Optional Cross-Validation)</span>
+              </span>
+              <span className={`text-[10px] font-mono ${validSecSource ? 'text-telemetry-emerald' : 'text-rose-400'}`}>
+                {secondarySatelliteUrl.trim() ? (validSecSource ? '✓ Accredited Source' : '✗ Unaccredited Domain') : 'Optional'}
+              </span>
+            </label>
+            <input
+              type="url"
+              value={secondarySatelliteUrl}
+              onChange={(e) => setSecondarySatelliteUrl(e.target.value)}
+              placeholder="https://sentinel-hub.com/... or https://emergency.copernicus.eu/..."
+              className="w-full px-3.5 py-2.5 rounded-xl bg-warroom-900 border border-warroom-700 font-mono text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-plasma-orange"
+            />
+            <p className="text-[10px] text-slate-400 mt-1">
+              Provides multi-sensor satellite corroboration to power the Tri-Lens AI Magistrate cross-examination.
+            </p>
           </div>
 
           {/* Information box */}
